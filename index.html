@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>react-native-webrtc server</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+</head>
+<body>
+<div id="textRoom" style="display: none;">
+  <div id="textRoomContent">
+    <h3>Text Room</h3>
+  </div>
+  <input id="textRoomInput" >
+  <button onclick="textRoomPress();">发送消息</button>
+</div>
+<div style="margin-top: 20px; display: flex; align-items: baseline; justify-content: flex-start;">
+  <video id="selfView" style="width: 650px;margin-right: 15px;" autoplay controls></video>
+  <div id="remoteViewContainer"></div>
+</div>
+<div id="roomIDContainer" style="margin-top: 20px;">
+  <input id="roomID" value="abc">
+  <button onclick="press();">创建/加入 房间</button>
+  <button onclick="desktopVideo();" id="btnSwitch">远程桌面</button>
+  <button onclick="cameraVideo();" id="btnSwitch">摄像头</button>
+</div>
+</body>
+<script src="/socket.io/socket.io.js"></script>
+<script type="text/javascript">
+var socket = io();
+
+var RTCPeerConnection = window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection || window.msRTCPeerConnection;
+var RTCSessionDescription = window.RTCSessionDescription || window.mozRTCSessionDescription || window.webkitRTCSessionDescription || window.msRTCSessionDescription;
+// var configuration = {"iceServers": [{"url": "stun:192.168.1.114:3478", "username": "fanke", "credential": "6166112"}]};
+var sdpSemantics = "unified-plan"; //unified-plan: 收发器，plan-b: 常规
+var configuration = {"iceServers": [{"url": "stun:192.168.1.114:3478"}], sdpSemantics: sdpSemantics};
+// var configuration = {"iceServers": [{"url": "stun:stunserver.org"}]};
+
+var pcPeers = {};
+var selfView = document.getElementById("selfView");
+var remoteViewContainer = document.getElementById("remoteViewContainer");
+var localStream; var isConnect = false;
+
+function desktopVideo(){
+  if(isConnect == false){ alert('信令服务器，未连接。'); return;}
+  navigator.mediaDevices.getDisplayMedia({"video": true }).then(stream => {
+    localStream = stream;
+    selfView.srcObject = stream
+    selfView.muted = true;
+  }).catch(logError);
+}
+function cameraVideo(){
+  if(isConnect == false){ alert('信令服务器，未连接。'); return;}
+  navigator.getUserMedia({ "audio": true, "video": true }, function (stream) {
+    localStream = stream;
+    selfView.srcObject = stream
+    selfView.muted = true;
+  }, logError);
+}
+function join(roomID) {
+  socket.emit('join', roomID, function(socketIds){
+    console.log('join', socketIds);
+    for (var i in socketIds) {
+      var socketId = socketIds[i];
+      createPC(socketId, true);
+    }
+  });
+}
+function createPC(socketId, isOffer) {
+  var pc = new RTCPeerConnection(configuration);
+  pcPeers[socketId] = pc;
+
+  pc.onicecandidate = function (event) {
+    console.log('onicecandidate', event.candidate);
+    if (event.candidate) {
+      socket.emit('exchange', {'to': socketId, 'candidate': event.candidate });
+    }
+  };
+
+  function createOffer() {
+    pc.createOffer().then(desc => {
+      console.log('createOffer', desc);
+
+      pc.setLocalDescription(desc).then(() => {
+        console.log('setLocalDescription', pc.localDescription);
+        socket.emit('exchange', {'to': socketId, 'sdp': pc.localDescription });
+      }).catch(logError);
+    }).catch(logError);
+  }
+  //需要谈判
+  pc.onnegotiationneeded = function () {
+    console.log('onnegotiationneeded');
+    if (isOffer) {
+      createOffer();
+    }
+  }
+  //ICE 连接状态更改时
+  pc.oniceconnectionstatechange = function(event) {
+    console.log('连接状态：', event.target.iceConnectionState);
+    if (event.target.iceConnectionState === 'connected') {
+      //创建数据通道
+      createDataChannel();
+    }
+  };
+  //信令状态改变
+  pc.onsignalingstatechange = function(event) {
+    console.log('信令状态：', event.target.signalingState);
+  };
+  //添加数据流（音频、视频）
+  pc.onaddstream = function (event) {
+    console.log('添加流(PlanB)：', event.stream);
+    var element = document.createElement('video');
+    element.id = "remoteView" + socketId;
+    element.autoplay = 'autoplay';
+    element.srcObject = event.stream;
+    element.controls = true;
+    element.style.height = "487px";
+    element.style.maxWidth = "274px";
+    remoteViewContainer.appendChild(element);
+  };
+  if(sdpSemantics === "unified-plan"){
+    pc.ontrack = function(event){
+      if(document.getElementById("remoteView" + socketId) == null){
+        var mediaStream = new MediaStream();
+        mediaStream.addTrack(event.track);
+
+        var element = document.createElement('video');
+        element.id = "remoteView" + socketId;
+        element.autoplay = 'autoplay';
+        element.srcObject = mediaStream;
+        element.controls = true;
+        element.style.height = "487px";
+        element.style.maxWidth = "274px";
+        remoteViewContainer.appendChild(element);
+      }else {
+        var video = document.getElementById("remoteView" + socketId)
+        video.srcObject.addTrack(event.track);
+        console.log('添加流(UnifiedPlan)：', video.srcObject);
+        video.load();
+      }
+    }
+  }
+  if(sdpSemantics === "unified-plan"){
+    for (const track of localStream.getTracks()) {
+      pc.addTrack(track);
+    }
+    //音频轨道 sendrecv  sendonly  recvonly  inactive
+    pc.getTransceivers()[0].direction = "sendrecv";
+    //视频轨道
+    pc.getTransceivers()[1].direction = "sendrecv";
+  }else {
+    pc.addStream(localStream);
+  }
+  // debugger;
+  function createDataChannel() {
+    if (pc.textDataChannel) {
+      return;
+    }
+    var dataChannel = pc.createDataChannel("text");
+
+    dataChannel.onerror = function (error) {
+      console.log("数据通道错误：", error);
+    };
+
+    dataChannel.onmessage = function (event) {
+      console.log("通道收到消息：", event.data);
+      var content = document.getElementById('textRoomContent');
+      content.innerHTML = content.innerHTML + '<p>' + socketId + ': ' + event.data + '</p>';
+    };
+
+    dataChannel.onopen = function () {
+      console.log('数据通道打开');
+      var textRoom = document.getElementById('textRoom');
+      textRoom.style.display = "block";
+    };
+
+    dataChannel.onclose = function () {
+      console.log("数据通道关闭");
+      delete pc.textDataChannel;
+    };
+
+    pc.textDataChannel = dataChannel;
+  }
+  return pc;
+}
+
+function exchange(data) {
+  var fromId = data.from;
+  var pc;
+  if (fromId in pcPeers) {
+    pc = pcPeers[fromId];
+  } else {
+    pc = createPC(fromId, false);
+  }
+
+  if (data.sdp) {
+    console.log('交换 Sdp', data);
+    pc.setRemoteDescription(new RTCSessionDescription(data.sdp)).then(() => {
+      if (pc.remoteDescription.type == "offer")
+        pc.createAnswer().then(desc => {
+          console.log('createAnswer', desc);
+          pc.setLocalDescription(desc).then(() => {
+            console.log('setLocalDescription', pc.localDescription);
+            socket.emit('exchange', {'to': fromId, 'sdp': pc.localDescription });
+          }).catch(logError);
+        }).catch(logError);
+    }).catch(logError);
+  } else {
+    console.log('交换 candidate', data);
+    pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+  }
+}
+
+function leave(socketId) {
+  console.log('离开房间', socketId);
+  var pc = pcPeers[socketId];
+  pc.close();
+  delete pcPeers[socketId];
+  var video = document.getElementById("remoteView" + socketId);
+  if (video) video.remove();
+}
+
+socket.on('exchange', function(data){
+  exchange(data);
+});
+socket.on('leave', function(socketId){
+  leave(socketId);
+});
+
+socket.on('connect', function(data) {
+  console.log('信令服务器：连接成功');
+  isConnect = true;
+});
+
+function logError(error) {
+  console.log("logError", error);
+}
+
+function press() {
+  var roomID = document.getElementById('roomID').value;
+  if (roomID == "") {
+    alert('Please enter room ID');
+  } else {
+    var roomIDContainer = document.getElementById('roomIDContainer');
+    roomIDContainer.parentElement.removeChild(roomIDContainer);
+    join(roomID);
+  }
+}
+function textRoomPress() {
+  var text = document.getElementById('textRoomInput').value;
+  if (text == "") {
+    alert('Enter something');
+  } else {
+    document.getElementById('textRoomInput').value = '';
+    var content = document.getElementById('textRoomContent');
+    content.innerHTML = content.innerHTML + '<p>' + 'Me' + ': ' + text + '</p>';
+    for (var key in pcPeers) {
+      var pc = pcPeers[key];
+      pc.textDataChannel.send(text);
+    }
+  }
+}
+
+</script>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-68314333-1', 'auto');
+  ga('send', 'pageview');
+
+</script>
+</html>
