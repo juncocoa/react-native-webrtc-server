@@ -1,6 +1,6 @@
 ## react-native-webrtc-server
 - 这是一台信令服务器（signaling server）, 端口 4443
-- 此服务是（加入房间工作模式，需要 P2P 请修改 app.js 即可
+- 此服务是（加入房间工作模式，需要 P2P 请修改 app.js 即可）
 
 ## 开始使用
 
