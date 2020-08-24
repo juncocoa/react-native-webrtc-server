@@ -6,6 +6,7 @@
 
 1. `npm install`
 2. `npm start`  或  `node app.js`
+3. `流媒体服务器地址，请修改 index.html to 34 line`
 
 ## 网页访问
 http://127.0.0.1:4443/
