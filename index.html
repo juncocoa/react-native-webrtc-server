@@ -22,19 +22,23 @@
   <button onclick="desktopVideo();" id="btnSwitch">远程桌面</button>
   <button onclick="cameraVideo();" id="btnSwitch">摄像头</button>
 </div>
+<div id="divShowTransceiver" style="display: none; margin-top: 20px;">
+  Transceiver API：<button onclick="switchAudio();" id="btnSwitch">音频 开/关</button>
+  <button onclick="switchVideo();" id="btnSwitch">视频 开/关</button>
+</div>
 </body>
 <script src="/socket.io/socket.io.js"></script>
 <script type="text/javascript">
-var socket = io();
+var socket = io.connect('http://192.168.1.5:4443', {transports: ['websocket'], reconnection: true});
 
 var RTCPeerConnection = window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection || window.msRTCPeerConnection;
 var RTCSessionDescription = window.RTCSessionDescription || window.mozRTCSessionDescription || window.webkitRTCSessionDescription || window.msRTCSessionDescription;
 // var configuration = {"iceServers": [{"url": "stun:192.168.1.114:3478", "username": "fanke", "credential": "6166112"}]};
 var sdpSemantics = "unified-plan"; //unified-plan: 收发器，plan-b: 常规
-var configuration = {"iceServers": [{"url": "stun:192.168.1.114:3478"}], sdpSemantics: sdpSemantics};
+var configuration = {"iceServers": [{"url": "stun:192.168.1.6:3478"}], sdpSemantics: sdpSemantics};
 // var configuration = {"iceServers": [{"url": "stun:stunserver.org"}]};
 
-var pcPeers = {};
+var pcPeers = {}; var isOffer = false;
 var selfView = document.getElementById("selfView");
 var remoteViewContainer = document.getElementById("remoteViewContainer");
 var localStream; var isConnect = false;
@@ -55,16 +59,63 @@ function cameraVideo(){
     selfView.muted = true;
   }, logError);
 }
+function switchAudio(){
+  if(Object.getOwnPropertyNames(pcPeers).length <= 0){ alert("请先连接一个终端，在操作收发器。"); return; }
+
+  var transceiver;
+  for (var key in pcPeers) {
+    var transceivers = pcPeers[key].getTransceivers()
+    for (let i = 0; i < transceivers.length; i++) {
+      var track = transceivers[i].sender.track;
+      if(track.kind.toLowerCase() === "audio"){
+        transceiver = transceivers[i]; break;
+      }
+    }
+    break;
+  }
+  isOffer = true;
+
+  if(transceiver.direction === "sendrecv"){
+    transceiver.direction = "recvonly";
+  }else {
+    transceiver.direction = "sendrecv";
+  }
+}
+function switchVideo() {
+  if(Object.getOwnPropertyNames(pcPeers).length <= 0){ alert("请先连接一个终端，在操作收发器。"); return; }
+  var transceiver;
+
+  for (var key in pcPeers) {
+    var transceivers = pcPeers[key].getTransceivers()
+    for (let i = 0; i < transceivers.length; i++) {
+      var track = transceivers[i].sender.track;
+      if(track.kind.toLowerCase() === "video"){
+        transceiver = transceivers[i]; break;
+      }
+    }
+    break;
+  }
+  isOffer = true;
+
+  if(transceiver.direction === "sendrecv"){
+    transceiver.direction = "recvonly";
+  }else {
+    transceiver.direction = "sendrecv";
+  }
+}
 function join(roomID) {
   socket.emit('join', roomID, function(socketIds){
     console.log('join', socketIds);
+    if(sdpSemantics === "unified-plan"){ document.getElementById("divShowTransceiver").style.display = "block"; }
+
     for (var i in socketIds) {
       var socketId = socketIds[i];
-      createPC(socketId, true);
+      isOffer = true;
+      createPC(socketId);
     }
   });
 }
-function createPC(socketId, isOffer) {
+function createPC(socketId) {
   var pc = new RTCPeerConnection(configuration);
   pcPeers[socketId] = pc;
 
@@ -75,21 +126,17 @@ function createPC(socketId, isOffer) {
     }
   };
 
-  function createOffer() {
-    pc.createOffer().then(desc => {
-      console.log('createOffer', desc);
-
-      pc.setLocalDescription(desc).then(() => {
-        console.log('setLocalDescription', pc.localDescription);
-        socket.emit('exchange', {'to': socketId, 'sdp': pc.localDescription });
-      }).catch(logError);
-    }).catch(logError);
-  }
   //需要谈判
   pc.onnegotiationneeded = function () {
     console.log('onnegotiationneeded');
     if (isOffer) {
-      createOffer();
+      pc.createOffer().then(desc => {
+        console.log('createOffer', desc);
+        pc.setLocalDescription(desc).then(() => {
+          console.log('setLocalDescription', pc.localDescription);
+          socket.emit('exchange', {'to': socketId, 'sdp': pc.localDescription });
+        }).catch(logError);
+      }).catch(logError);
     }
   }
   //ICE 连接状态更改时
@@ -188,7 +235,8 @@ function exchange(data) {
   if (fromId in pcPeers) {
     pc = pcPeers[fromId];
   } else {
-    pc = createPC(fromId, false);
+    isOffer = false;
+    pc = createPC(fromId);
   }
 
   if (data.sdp) {
@@ -258,16 +306,5 @@ function textRoomPress() {
     }
   }
 }
-
-</script>
-<script>
-  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
-  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
-  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
-  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
-
-  ga('create', 'UA-68314333-1', 'auto');
-  ga('send', 'pageview');
-
 </script>
 </html>
