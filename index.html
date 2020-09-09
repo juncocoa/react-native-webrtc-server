@@ -33,6 +33,8 @@ var socket = io.connect('http://192.168.1.5:4443', {transports: ['websocket'], r
 
 var RTCPeerConnection = window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection || window.msRTCPeerConnection;
 var RTCSessionDescription = window.RTCSessionDescription || window.mozRTCSessionDescription || window.webkitRTCSessionDescription || window.msRTCSessionDescription;
+navigator.getUserMedia = navigator.getUserMedia || navigator.mozGetUserMedia || navigator.webkitGetUserMedia || navigator.msGetUserMedia;
+
 // var configuration = {"iceServers": [{"url": "stun:192.168.1.114:3478", "username": "fanke", "credential": "6166112"}]};
 var sdpSemantics = "unified-plan"; //unified-plan: 收发器，plan-b: 常规
 var configuration = {"iceServers": [{"url": "stun:192.168.1.6:3478"}], sdpSemantics: sdpSemantics};
@@ -279,7 +281,11 @@ socket.on('connect', function(data) {
 });
 
 function logError(error) {
-  console.log("logError", error);
+  if(error.message === "Failed to allocate videosource" || error.message === "Could not start video source"){
+      alert("摄像头，被占用。");
+  }else {
+      console.log("logError", error);
+  }
 }
 
 function press() {
