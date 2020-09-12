@@ -2,6 +2,10 @@
 - 这是一台信令服务器（signaling server）, 端口 4443
 - 此服务是（加入房间工作模式，需要 P2P 请修改 app.js 即可）
 
+![walFDx](https://s1.ax1x.com/2020/09/12/walFDx.png)
+
+![wanWYd](https://s1.ax1x.com/2020/09/12/wanWYd.png)
+
 ## 开始使用
 
 1. `npm install`
